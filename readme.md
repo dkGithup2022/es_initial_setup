@@ -1,4 +1,3 @@
-
 ## ES 설치와 운영을 위한 설정
 
 리눅스 환경에서의 es 운영을 위해 공통적으로 필요한 요소들에 대해 다룬다.
@@ -17,35 +16,288 @@ db 운영을 위한 storage, 외부접속을 위한 network, 그리고 환경변
 모든 DB 나 어플리케이션을 사용하기 위한 공통 적인 리눅스 설정이다. Elastic search 는 일종의 DB 이기 때문에 스토리지를 제대로 확보하는 것이 우선이 되어야 한다.
 
 관련 링크 : https://github.com/dkGithup2022/centos_storage_issue
+- (방치된 db의  linux storage 가 100 % 가 되었을 때, 서버 살리기  )
 
-(방치된 db의  linux storage 가 100 % 가 되었을 때, 서버 살리기  )
+
 
 ##### storage 
 
+</br>
+
+1. 스토리지 있는지 확인 하기
+
+fdisk -l : 물리적으로 장착된 디스크 스토리지 크기를 확인.  (1TB 의 충분한 디스크 스토리지가 보인다.)
 
 
-##### network 
+```
+[root@localhost /]# fdisk -l
 
-#### env variable 
+Disk /dev/sda: 966.4 GB, 966367641600 bytes, 1887436800 sectors
+Units = sectors of 1 * 512 = 512 bytes
+Sector size (logical/physical): 512 bytes / 512 bytes
+I/O size (minimum/optimal): 512 bytes / 512 bytes
+Disk label type: dos
+Disk identifier: 0x000c2eea
+
+   Device Boot      Start         End      Blocks   Id  System
+/dev/sda1   *        2048     2099199     1048576   83  Linux
+/dev/sda2         2099200  1887436799   942668800   8e  Linux LVM
+
+Disk /dev/mapper/centos-root: 53.7 GB, 53687091200 bytes, 104857600 sectors
+Units = sectors of 1 * 512 = 512 bytes
+Sector size (logical/physical): 512 bytes / 512 bytes
+I/O size (minimum/optimal): 512 bytes / 512 bytes
+
+
+Disk /dev/mapper/centos-swap: 6308 MB, 6308233216 bytes, 12320768 sectors
+Units = sectors of 1 * 512 = 512 bytes
+Sector size (logical/physical): 512 bytes / 512 bytes
+I/O size (minimum/optimal): 512 bytes / 512 bytes
+
+
+Disk /dev/mapper/centos-home: 905.3 GB, 905290186752 bytes, 1768144896 sectors
+Units = sectors of 1 * 512 = 512 bytes
+Sector size (logical/physical): 512 bytes / 512 bytes
+I/O size (minimum/optimal): 512 bytes / 512 bytes
+
+```
+
 
 </br>
 
+
+2.  df : 파일 시스템에서 사용 할 수 있는 디스크 크기를 확인
+
+      (centos -home 에서 880 GB 사용이 가능함을 확인, 이정도면 충분하다)
+
+```
+[root@localhost /]# df
+Filesystem              1K-blocks    Used Available Use% Mounted on
+devtmpfs                  6057144       0   6057144   0% /dev
+tmpfs                     6068992       0   6068992   0% /dev/shm
+tmpfs                     6068992   25452   6043540   1% /run
+tmpfs                     6068992       0   6068992   0% /sys/fs/cgroup
+/dev/mapper/centos-root  52403200 3112532  49290668   6% /
+/dev/sda1                 1038336  198408    839928  20% /boot
+/dev/mapper/centos-home 883640772   33216 883607556   1% /home
+tmpfs                     1213800       0   1213800   0% /run/user/0
+
+```
+
+</br>
+
+3. es 위치 변경
+
+ES 의 위치를 df 에서 확인한  바꾼 뒤  확인 
+```agsl
+[root@localhost elasticsearch]# pwd
+/home/elasticsearch
+[root@localhost elasticsearch]# ls
+LICENSE.txt  NOTICE.txt  README.asciidoc  bin  config  data  elasticsearch-7.14.1  jdk  lib  logs  modules  plugins
+```
+
+systemctl service script 도 경로를 바꿔준다. 
+```agsl
+[Unit]
+Description=Elasticsearch Cluster
+Documentation=https://www.elastic.co/kr/products/elasticsearch
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+RuntimeDirectory=elasticsearch-7.14.1
+WorkingDirectory=/home/elasticsearch
+
+LimitMEMLOCK=infinity
+LimitNOFILE=65535
+LimitNPROC=4096
+
+ExecStart=/home/elasticsearch/bin/elasticsearch
+ExecReload=/home/elasticsearch/bin/elasticsearch reload
+RestartSec=3
+
+User=elastic
+Group=elastic
+
+```
+
+</br>
+
+##### network 
+
+9200 포트 ( 혹은 어플리케이션에 사용할 포트 )에 대한 방화벽을 열고, 외부 연결을 위한 elasticsearch 의 통신 관련 config 에 대해 말한다.
+( dhcp 나 기본적인 리눅스 컴퓨터의 인터넷 연결에 대해선 다루지 않는다. )
+
+9200 포트 열기
+```
+firewall-cmd --permanent --zone=public --add-port=9200/tcp
+```
+
+잘 됐는지 한번 보기
+
+```agsl
+firewall-cmd --list-all-zone
+
+```
+
+
+elasticsearch/config/elasticsearch.yml 
+
+호스트 0.0.0.0 으로 해야 외부 접속 가능하다.
+
+나머지는 single-node 기준으로 다음에 할때 복붙하려고 올림 
+
+```agsl
+network.host: 0.0.0.0
+#
+# By default Elasticsearch listens for HTTP traffic on the first free port it
+# finds starting at 9200. Set a specific HTTP port here:
+#
+http.port: 9200
+#
+# For more information, consult the network module documentation.
+#
+# --------------------------------- Discovery ----------------------------------
+#
+# Pass an initial list of hosts to perform discovery when this node is started:
+# The default list of hosts is ["127.0.0.1", "[::1]"]
+#
+#discovery.seed_hosts: ["host1", "host2"]
+discovery.type: single-node
+discovery.seed_hosts: ["127.0.0.1"]
+```
+
+
+
+
+#### ETC
+
+##### 자바 버전 및 ENV
+
+자바는 11버전 이상 ( es 7.x 버전 기준  )
+
+</br>
+
+##### ES 폴더와 파일의 소유자와 그룹 옵션 변경
+
+chown -R elastic:elastic 으로 하위까지 다 elastic 소유자로 변경
+
+```
+root@localhost home]# ls -al
+합계 0
+drwxr-xr-x.  4 root    root     42  5월 19 16:20 .
+dr-xr-xr-x. 18 root    root    241  5월  2 12:42 ..
+drwx------.  3 elastic elastic  76  5월  2 14:00 elastic
+drwxr-xr-x. 11 elastic elastic 195  5월  2 14:00 elasticsearch
+```
+
+</br>
+
+
+##### max open files 
+
+/etc/security/limits.conf
+```
+#<domain>      <type>  <item>         <value>
+#
+#*               soft    core            0
+#*               hard    rss             10000
+#@student        hard    nproc           20
+#@faculty        soft    nproc           20
+#@faculty        hard    nproc           50
+#ftp             hard    nproc           0
+#@student        -       maxlogins       4
+
+root hard nofile 500000
+root soft nofile 500000
+elastic hard nofile 500000
+elastic soft nofile 500000
+# End of file
+```
+
+확인하기  :cat /proc/sys/fs/file-max
+```agsl
+[root@localhost security]# cat /proc/sys/fs/file-max
+1192299
+```
+
+
+#####  max_thread 값 변경
+
+
+</br> 
+
+
+</br>
+
+##### memory swap option 
+
+스 왑 방 지 
+-> 힙사이즈 고정되어 있을때 최적화가 잘됨. disk io 는 검색에서 성능의 주된 병목 요인임
+
+
+/{elastic}/config/elasticsearch.yml
+```agsl
+
+# ----------------------------------- Memory -----------------------------------
+#
+# Lock the memory on startup:
+#
+bootstrap.memory_lock: true
+#
+# Make sure that the heap size is set to about half the memory available
+# on the system and that the owner of the process is allowed to use this
+# limit.
+#
+# Elasticsearch performs poorly when the system is swapping the memory.
+
+```
+
+
+
+</br>
+
+
 ### config
 
-##### networkd
 
-##### naming 
+##### JVM
 
-##### JVM 
+전체 램사이즈의 절반정도의 HEAP SIZE 를 고정 할당 .
 
+나머지 절반은 커널 작업을 위해 남겨야함 
+
+/{elastic}/config/jvm.options
+
+```
+################################################################
+## IMPORTANT: JVM heap size
+################################################################
+##
+## The heap size is automatically configured by Elasticsearch
+## based on the available memory in your system and the roles
+## each node is configured to fulfill. If specifying heap is
+## required, it should be done through a file in jvm.options.d,
+## and the min and max should be set to the same value. For
+## example, to set the heap to 4 GB, create a new file in the
+## jvm.options.d directory containing these lines:
+##
+-Xms5g
+-Xmx5g
+
+```
 
 ##### ETC 
 
+기억나는 건 이정도 ? 
+
+나머지는 기억날때 업데이트 하겠음 . 
 
 
 
 
-## ES 운영 현황 조사 
+
+## ES 운영 현황 조사 - Opster article 번역 
 
 출처 : https://opster.com/blogs/elasticsearch-best-practices-3000-cluster-analysis/
 
